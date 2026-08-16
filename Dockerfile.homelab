@@ -1,0 +1,14 @@
+# Homelab image: upstream Hermes Agent + the Claude Code CLI.
+#
+# The bundled autonomous-ai-agents/claude-code skill drives the `claude`
+# binary via the terminal tool, but upstream does not ship it — the image
+# seals /opt/hermes read-only and its lazy-install path is Python-only.
+# Deriving here is the reproducible way to add an npm CLI to the runtime.
+#
+# Claude Code credentials live in $HOME/.claude. Pair this image with
+# `terminal.home_mode: profile` so tool subprocesses get HOME=/opt/data/home
+# on the durable volume, otherwise the login is lost on every redeploy.
+FROM nousresearch/hermes-agent:v2026.8.13
+
+RUN npm install -g @anthropic-ai/claude-code && \
+    claude --version
