@@ -1,4 +1,5 @@
-# Homelab image: upstream Hermes Agent + the Claude Code CLI.
+# Homelab image: upstream Hermes Agent + the Claude Code CLI, plus a launcher
+# that runs the gateway and dashboard together in ONE container.
 #
 # The bundled autonomous-ai-agents/claude-code skill drives the `claude`
 # binary via the terminal tool, but upstream does not ship it — the image
@@ -8,7 +9,14 @@
 # Claude Code credentials live in $HOME/.claude. Pair this image with
 # `terminal.home_mode: profile` so tool subprocesses get HOME=/opt/data/home
 # on the durable volume, otherwise the login is lost on every redeploy.
+#
+# homelab-two-service.sh is the container command (set in Dokploy). See the
+# header of that script for why s6-overlay cannot be used on titan.
 FROM nousresearch/hermes-agent:v2026.8.13
 
 RUN npm install -g @anthropic-ai/claude-code && \
     claude --version
+
+COPY docker/homelab-two-service.sh /opt/hermes/docker/homelab-two-service.sh
+RUN chmod +x /opt/hermes/docker/homelab-two-service.sh && \
+    bash -n /opt/hermes/docker/homelab-two-service.sh
