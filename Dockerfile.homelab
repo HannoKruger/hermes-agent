@@ -20,3 +20,18 @@ RUN npm install -g @anthropic-ai/claude-code && \
 COPY docker/homelab-two-service.sh /opt/hermes/docker/homelab-two-service.sh
 RUN chmod +x /opt/hermes/docker/homelab-two-service.sh && \
     bash -n /opt/hermes/docker/homelab-two-service.sh
+
+# Overlay the bounded-.sync.lock fix onto the pinned upstream runtime.
+# Upstream's _sync_back_locked() blocks forever on fcntl.flock(LOCK_EX), which
+# wedges a gateway turn permanently when a peer sandbox holds the lock — the
+# inactivity watchdog cannot interrupt a thread parked in a syscall. Still
+# unfixed as of v2026.8.18, so carry it here until upstream takes the patch.
+#
+# SAFE ONLY WHILE this file is byte-identical between the pinned tag and the
+# branch it is copied from — verify with:
+#   diff <(git show v2026.8.13:tools/environments/file_sync.py) \
+#        tools/environments/file_sync.py
+# The py_compile guard below catches a syntax break, not a semantic drift.
+COPY tools/environments/file_sync.py /opt/hermes/tools/environments/file_sync.py
+RUN python3 -c "import py_compile,sys; py_compile.compile('/opt/hermes/tools/environments/file_sync.py', doraise=True)" && \
+    grep -q "LOCK_NB" /opt/hermes/tools/environments/file_sync.py
