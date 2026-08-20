@@ -4,7 +4,10 @@ import io
 import logging
 import os
 import signal
+import subprocess
+import sys
 import tarfile
+import threading
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -319,7 +322,10 @@ class TestSyncBackFileLock:
 
         lock_calls = mock_flock.call_args_list
         lock_ops = [c[0][1] for c in lock_calls]
-        assert fcntl.LOCK_EX in lock_ops
+        # Acquisition is LOCK_EX, OR'd with LOCK_NB on the bounded-deadline
+        # path in _acquire_sync_lock. Assert the exclusive bit is set rather
+        # than pinning an exact flag composition.
+        assert any(op & fcntl.LOCK_EX for op in lock_ops)
         assert fcntl.LOCK_UN in lock_ops
 
     def test_sync_back_skips_flock_when_fcntl_none(self, tmp_path):
@@ -330,6 +336,67 @@ class TestSyncBackFileLock:
         with patch("tools.environments.file_sync.fcntl", None):
             # Should not raise — locking is skipped
             mgr.sync_back(hermes_home=tmp_path / ".hermes")
+
+
+_HOLD_LOCK_SRC = (
+    "import fcntl, sys\n"
+    "f = open(sys.argv[1], 'w')\n"
+    "fcntl.flock(f, fcntl.LOCK_EX)\n"
+    "print('locked', flush=True)\n"
+    # Hold the lock until the test closes our stdin. Exiting on EOF keeps
+    # teardown free of os.kill(), which tests/conftest.py's live-system
+    # guard blocks for out-of-subtree PIDs.
+    "sys.stdin.readline()\n"
+)
+
+
+class TestSyncBackLockContention:
+    """sync_back() must not block forever on a contended .sync.lock.
+
+    ``_sync_back_locked`` acquires the lock with a bare
+    ``fcntl.flock(fd, LOCK_EX)`` — blocking, no ``LOCK_NB``, no deadline.
+    A second gateway sandbox holding the lock therefore parks the calling
+    thread in a syscall CPython cannot interrupt, so the gateway's
+    inactivity watchdog can never reclaim the turn.
+    """
+
+    def test_sync_back_gives_up_when_lock_held_by_another_process(
+        self, tmp_path, monkeypatch
+    ):
+        monkeypatch.setenv("HERMES_SYNC_BACK_LOCK_TIMEOUT", "1")
+
+        hermes_home = tmp_path / ".hermes"
+        hermes_home.mkdir(parents=True, exist_ok=True)
+        lock_path = hermes_home / ".sync.lock"
+        lock_path.touch()
+
+        holder = subprocess.Popen(
+            [sys.executable, "-c", _HOLD_LOCK_SRC, str(lock_path)],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            text=True,
+        )
+        try:
+            assert holder.stdout.readline().strip() == "locked"
+
+            mgr = _make_manager(tmp_path, bulk_download_fn=_make_download_fn({}))
+            finished = threading.Event()
+
+            def _run():
+                try:
+                    mgr.sync_back(hermes_home=hermes_home)
+                finally:
+                    finished.set()
+
+            threading.Thread(target=_run, daemon=True).start()
+
+            assert finished.wait(15), (
+                "sync_back() never returned while another process held "
+                ".sync.lock - unbounded fcntl.flock(LOCK_EX) wedges the turn"
+            )
+        finally:
+            holder.stdin.close()
+            holder.wait(timeout=10)
 
 
 class TestInferHostPath:

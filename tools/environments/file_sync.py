@@ -130,6 +130,44 @@ _SYNC_BACK_MAX_RETRIES = 3
 _SYNC_BACK_BACKOFF = (2, 4, 8)  # seconds between retries
 _SYNC_BACK_MAX_BYTES = 2 * 1024 * 1024 * 1024  # 2 GiB — refuse to extract larger tars
 
+# Deadline for acquiring ``.sync.lock``. A bare blocking ``flock(LOCK_EX)``
+# parks the caller in a syscall CPython cannot interrupt, so one stuck peer
+# wedges the calling gateway turn forever — the inactivity watchdog fires but
+# cannot reclaim a thread that is not executing bytecode. Bound the wait and
+# skip the sync instead. ``0`` restores the old unbounded behaviour.
+_SYNC_BACK_LOCK_TIMEOUT = 30.0
+_SYNC_BACK_LOCK_POLL = 0.1
+
+
+def _sync_back_lock_timeout() -> float:
+    """Return the ``.sync.lock`` acquisition deadline in seconds."""
+    raw = os.environ.get("HERMES_SYNC_BACK_LOCK_TIMEOUT", "")
+    try:
+        value = float(raw) if str(raw).strip() else _SYNC_BACK_LOCK_TIMEOUT
+    except (TypeError, ValueError):
+        return _SYNC_BACK_LOCK_TIMEOUT
+    return max(0.0, value)
+
+
+def _acquire_sync_lock(lock_fd) -> bool:
+    """Take an exclusive flock on *lock_fd*, giving up after the deadline.
+
+    Returns True when the lock is held, False when the deadline expired.
+    """
+    timeout = _sync_back_lock_timeout()
+    if timeout <= 0:
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        return True
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return True
+        except OSError:
+            if time.monotonic() >= deadline:
+                return False
+            _sleep(_SYNC_BACK_LOCK_POLL)
+
 
 class FileSyncManager:
     """Tracks local file changes and syncs to a remote environment.
@@ -341,7 +379,15 @@ class FileSyncManager:
             return
         lock_fd = open(lock_path, "w", encoding="utf-8")
         try:
-            fcntl.flock(lock_fd, fcntl.LOCK_EX)
+            if not _acquire_sync_lock(lock_fd):
+                logger.warning(
+                    "sync_back: gave up acquiring %s after %.0fs — another "
+                    "sandbox still holds it; skipping sync-back rather than "
+                    "blocking the turn",
+                    lock_path,
+                    _sync_back_lock_timeout(),
+                )
+                return
             self._sync_back_impl()
         finally:
             try:
