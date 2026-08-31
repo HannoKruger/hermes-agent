@@ -51,3 +51,12 @@ RUN python3 -c "import py_compile,sys; py_compile.compile('/opt/hermes/tools/env
 # pip (uv-created), so install through uv against that interpreter explicitly.
 RUN uv pip install --python /opt/hermes/.venv/bin/python edge-tts==7.2.7 && \
     /opt/hermes/.venv/bin/python -c "import edge_tts; print('edge-tts', edge_tts.__version__)"
+
+# TEMPORARY (remove once the Discord auto-TTS gate is diagnosed).
+# The adapter's auto-TTS block is guarded by a five-part condition and an
+# inner `if check_tts_requirements():` with no else and no exception — so a
+# failure anywhere in it is completely silent. Every gate reads as passing
+# from config, yet the block never runs. This probe logs each gate's actual
+# runtime value so the failing one identifies itself instead of being guessed.
+COPY docker/patch_autotts_debug.py /tmp/patch_autotts_debug.py
+RUN python3 /tmp/patch_autotts_debug.py && rm /tmp/patch_autotts_debug.py
