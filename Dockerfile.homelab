@@ -35,3 +35,19 @@ RUN chmod +x /opt/hermes/docker/homelab-two-service.sh && \
 COPY tools/environments/file_sync.py /opt/hermes/tools/environments/file_sync.py
 RUN python3 -c "import py_compile,sys; py_compile.compile('/opt/hermes/tools/environments/file_sync.py', doraise=True)" && \
     grep -q "LOCK_NB" /opt/hermes/tools/environments/file_sync.py
+
+# edge-tts for Discord voice-channel replies. The upstream image builds with
+# `--extra all --extra messaging`, which covers discord.py[voice] (PyNaCl +
+# opus bindings) but NOT edge-tts — it lives in its own `[edge-tts]` extra.
+# We can't rely on the lazy-install path either: the homelab deployment sets
+# HERMES_DISABLE_LAZY_INSTALLS=1, so the package has to be baked in here.
+#
+# Chosen over the litellm route because litellm serves no TTS model, and over
+# OpenAI/ElevenLabs because edge-tts is free, keyless, and ships native
+# Afrikaans voices (af-ZA-AdriNeural / af-ZA-WillemNeural) — Hermes runs with
+# stt.language: af, so replies should come back in the same voice register.
+#
+# Version pinned to match pyproject.toml's [edge-tts] extra. The venv has no
+# pip (uv-created), so install through uv against that interpreter explicitly.
+RUN uv pip install --python /opt/hermes/.venv/bin/python edge-tts==7.2.7 && \
+    /opt/hermes/.venv/bin/python -c "import edge_tts; print('edge-tts', edge_tts.__version__)"
