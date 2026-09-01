@@ -52,11 +52,15 @@ RUN python3 -c "import py_compile,sys; py_compile.compile('/opt/hermes/tools/env
 RUN uv pip install --python /opt/hermes/.venv/bin/python edge-tts==7.2.7 && \
     /opt/hermes/.venv/bin/python -c "import edge_tts; print('edge-tts', edge_tts.__version__)"
 
-# TEMPORARY (remove once the Discord auto-TTS gate is diagnosed).
-# The adapter's auto-TTS block is guarded by a five-part condition and an
-# inner `if check_tts_requirements():` with no else and no exception — so a
-# failure anywhere in it is completely silent. Every gate reads as passing
-# from config, yet the block never runs. This probe logs each gate's actual
-# runtime value so the failing one identifies itself instead of being guessed.
-COPY docker/patch_autotts_debug.py /tmp/patch_autotts_debug.py
-RUN python3 /tmp/patch_autotts_debug.py && rm /tmp/patch_autotts_debug.py
+
+# Fix auto-TTS on deployments that set HERMES_WRITE_SAFE_ROOT.
+# build_auto_tts_output_path() hardcodes tempfile.gettempdir() (/tmp), but
+# text_to_speech_tool() validates output_path via agent.file_safety, which
+# denies anything outside HERMES_WRITE_SAFE_ROOT (=/opt/data here). Every
+# auto-TTS write is refused, and the adapter checks
+# `if tts_data.get("success", True):` with no else and no raise — so the
+# playback loop runs zero times and the failure is totally silent. Discord
+# voice-channel replies and WhatsApp voice notes both die with no log.
+# Redirect the base dir to $HERMES_HOME/audio_cache (inside the safe root).
+COPY docker/patch_autotts_safe_path.py /tmp/patch_autotts_safe_path.py
+RUN python3 /tmp/patch_autotts_safe_path.py && rm /tmp/patch_autotts_safe_path.py
