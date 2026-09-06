@@ -64,3 +64,15 @@ RUN uv pip install --python /opt/hermes/.venv/bin/python edge-tts==7.2.7 && \
 # Redirect the base dir to $HERMES_HOME/audio_cache (inside the safe root).
 COPY docker/patch_autotts_safe_path.py /tmp/patch_autotts_safe_path.py
 RUN python3 /tmp/patch_autotts_safe_path.py && rm /tmp/patch_autotts_safe_path.py
+
+# Resolve terminal SSH identity from the ACTIVE profile, not the default home.
+# gateway/run.py bridges terminal.* from the DEFAULT home's config.yaml into
+# process-global TERMINAL_* env vars once at import, and terminal_tool.py reads
+# only those. Under gateway.multiplex_profiles every turn already runs in a
+# contextvar scope pointing get_hermes_home() at the sender's profile, so the
+# per-profile ssh_user/ssh_key/cwd were never reachable: both people inherited
+# the default home's deliberate `DISABLED-no-default-profile` / `/dev/null`
+# sentinel and every terminal call failed with "Permission denied (publickey)".
+# See the patch script header for why raising the sentinel is not a fix.
+COPY docker/patch_profile_terminal_config.py /tmp/patch_profile_terminal_config.py
+RUN python3 /tmp/patch_profile_terminal_config.py && rm /tmp/patch_profile_terminal_config.py
