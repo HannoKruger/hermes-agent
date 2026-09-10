@@ -76,3 +76,16 @@ RUN python3 /tmp/patch_autotts_safe_path.py && rm /tmp/patch_autotts_safe_path.p
 # See the patch script header for why raising the sentinel is not a fix.
 COPY docker/patch_profile_terminal_config.py /tmp/patch_profile_terminal_config.py
 RUN python3 /tmp/patch_profile_terminal_config.py && rm /tmp/patch_profile_terminal_config.py
+
+# Let vision read inbound media that ingest cached under the DEFAULT home.
+# _media_cache_roots() derives the permitted-read allowlist from
+# get_hermes_home(), which inside a turn is the routed profile's home. But the
+# gateway caches inbound photos during message ingest, BEFORE the profile scope
+# exists, so they land under the default home. Writer and reader never agree
+# under gateway.multiplex_profiles, the read is refused, and the caller falls
+# back to an in-sandbox read — the sandbox being hulk over SSH, which has no
+# /opt/data. Every photo failed with "not reachable inside the sandbox".
+# Adds the default home's media roots and logs a WARNING on every such read so
+# the underlying scope bug stays visible instead of silently working.
+COPY docker/patch_media_cache_roots.py /tmp/patch_media_cache_roots.py
+RUN python3 /tmp/patch_media_cache_roots.py && rm /tmp/patch_media_cache_roots.py
