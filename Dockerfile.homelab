@@ -89,3 +89,19 @@ RUN python3 /tmp/patch_profile_terminal_config.py && rm /tmp/patch_profile_termi
 # the underlying scope bug stays visible instead of silently working.
 COPY docker/patch_media_cache_roots.py /tmp/patch_media_cache_roots.py
 RUN python3 /tmp/patch_media_cache_roots.py && rm /tmp/patch_media_cache_roots.py
+
+# Let a typed reply answer a pending clarify under gateway.multiplex_profiles.
+# The adapter looked the clarify up under the agent:main key while the runner
+# registered it under agent:<profile>, so the answer queued behind the blocked
+# turn and every WhatsApp chat went silent until the 3600s clarify timeout.
+# Upstream fix 525ca9ca1c ships in v2026.8.16; drop this when FROM reaches it.
+COPY docker/patch_clarify_bypass_profile_key.py /tmp/patch_clarify_bypass_profile_key.py
+RUN python3 /tmp/patch_clarify_bypass_profile_key.py && rm /tmp/patch_clarify_bypass_profile_key.py
+
+# Let a typed WhatsApp message answer a clarify sent as a poll. v2026.8.13
+# rejects prose for a poll and queues it behind the very turn waiting on that
+# clarify, so the chat still stalled for the 3600s timeout. A WhatsApp poll
+# has no "Other" button, so typed text is accepted as the answer. Upstream
+# 9bff109783 (v2026.8.16) handles it differently; drop this when FROM reaches it.
+COPY docker/patch_whatsapp_clarify_free_text.py /tmp/patch_whatsapp_clarify_free_text.py
+RUN python3 /tmp/patch_whatsapp_clarify_free_text.py && rm /tmp/patch_whatsapp_clarify_free_text.py
