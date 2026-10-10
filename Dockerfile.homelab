@@ -105,3 +105,16 @@ RUN python3 /tmp/patch_clarify_bypass_profile_key.py && rm /tmp/patch_clarify_by
 # 9bff109783 (v2026.8.16) handles it differently; drop this when FROM reaches it.
 COPY docker/patch_whatsapp_clarify_free_text.py /tmp/patch_whatsapp_clarify_free_text.py
 RUN python3 /tmp/patch_whatsapp_clarify_free_text.py && rm /tmp/patch_whatsapp_clarify_free_text.py
+
+# Let Swarm replace a frozen gateway. The service had no health check, so a
+# gateway whose event loop hung stayed "Running" and nobody got a reply until a
+# user complained (2026-09-10, about an hour of silence). The script fails when
+# state/gateway.heartbeat is older than 90s. Worst case from freeze to a new
+# task: 90s stale + 4 failed checks x 30s + restart, so about 4 minutes.
+# start-period covers boot, where the heartbeat file is still the previous
+# container's.
+COPY docker/homelab-healthcheck.sh /opt/hermes/docker/homelab-healthcheck.sh
+RUN chmod +x /opt/hermes/docker/homelab-healthcheck.sh && \
+    sh -n /opt/hermes/docker/homelab-healthcheck.sh
+HEALTHCHECK --interval=30s --timeout=10s --start-period=180s --retries=4 \
+    CMD ["/opt/hermes/docker/homelab-healthcheck.sh"]
